@@ -1,31 +1,59 @@
-import 'dotenv/config';
-import express from 'express';
-import multer from 'multer';
-import fs from 'fs/promises';
-import { GoogleGenAI } from '@google/genai';
+const express = require('express');
+const dotenv = require('dotenv');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
+dotenv.config();
 const app = express();
-const upload = multer ();
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY});
-
-// ** Set your default Gemini model here **
-const GEMINI_MODEL = "gemini-2.5-flash";
-
 app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server ready on http://localhost:${PORT}`));
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: 'models/gemini-2.5-flash' });
 
+const upload = multer({ dest: 'uploads/' });
+
+const PORT = 3000;
+app.listen(PORT, () => {
+    console.log(`Gemini API server is running at http://localhost:${PORT}`);
+});
+
+// endpoint: /generate-text
 app.post('/generate-text', async (req, res) => {
-  try {
     const { prompt } = req.body;
-    const resp = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt
-    });
-    res.json({ result: resp.text });
-  } catch (err) {
-    console.error(error);
-    res.status(500).json({ error: err.message });
-  }
+
+    try {
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        res.json({ output: response.text() });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+function imageToGenerativePart(imagePath) {
+    return {
+        inlineData: {
+            data: Buffer.from(fs.readFileSync(imagePath)).toString('base64'),
+            mimeType: 'image/jpeg',
+        },
+    };
+}
+
+// endpoint: /generate-text-image
+app.post('/generate-from-image', upload.single('image'), async (req, res) => {
+    const prompt = req.body.prompt || 'Describe the image';
+    const image = imageToGenerativePart(req.file.path);
+
+    try {
+        const result = await model.generateContent([prompt, image]);
+        const response = await result.response;
+        res.json({ output: response.text() });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    } finally {
+        fs.unlinkSync(req.file.path);
+    }
 });
